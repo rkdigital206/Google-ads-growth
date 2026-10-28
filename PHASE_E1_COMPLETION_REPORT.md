@@ -44,3 +44,10 @@
 
 ## Ready for Phase F?
 **Conditionally yes** for design/implementation work on top of this base; a live read-only smoke test against a real test account should precede any Phase F mutation work.
+
+---
+## Addendum 2026-10-29 — remote deployment
+- Remote MCP endpoint `/mcp` (Streamable HTTP, stateless, bearer `MCP_API_KEY`, fail-closed) and read-only dashboard added; see DEPLOY_VERCEL.md.
+- Deployed on Vercel: https://google-ads-growth.vercel.app (Neon DB `neon-blue-flower`). Live `/mcp` verified: initialize OK, 25 tools.
+- Google Ads credentials not yet configured; no clients onboarded. Nothing run against live Google Ads.
+- RESUME POINT ("continue"): connect Claude Code to /mcp -> onboard first client -> Google Ads credentials -> Phase F (read-only smoke test first).
