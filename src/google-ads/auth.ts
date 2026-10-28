@@ -37,12 +37,27 @@ const log = childLogger({ module: "google-ads-auth" });
 
 let apiClient: GoogleAdsApi | null = null;
 
+/** Returns the Google Ads credentials, or throws a clear error naming the missing variables. */
+export function requireGoogleAdsCredentials() {
+  const missing = (["GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN"] as const).filter((k) => !env[k]);
+  if (missing.length > 0) {
+    throw new GoogleAdsApiError(`GOOGLE_ADS_NOT_CONFIGURED: Google Ads is not connected. Set ${missing.join(", ")} in the server environment.`);
+  }
+  return {
+    clientId: env.GOOGLE_ADS_CLIENT_ID as string,
+    clientSecret: env.GOOGLE_ADS_CLIENT_SECRET as string,
+    developerToken: env.GOOGLE_ADS_DEVELOPER_TOKEN as string,
+    refreshToken: env.GOOGLE_ADS_REFRESH_TOKEN as string,
+  };
+}
+
 function getApiClient(): GoogleAdsApi {
   if (!apiClient) {
+    const creds = requireGoogleAdsCredentials();
     apiClient = new GoogleAdsApi({
-      client_id: env.GOOGLE_ADS_CLIENT_ID,
-      client_secret: env.GOOGLE_ADS_CLIENT_SECRET,
-      developer_token: env.GOOGLE_ADS_DEVELOPER_TOKEN,
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
+      developer_token: creds.developerToken,
     });
     log.info("Google Ads API client initialized");
   }
@@ -64,7 +79,7 @@ function getApiClient(): GoogleAdsApi {
  */
 export async function listAccessibleCustomerIds(): Promise<string[]> {
   try {
-    const result = await getApiClient().listAccessibleCustomers(env.GOOGLE_ADS_REFRESH_TOKEN);
+    const result = await getApiClient().listAccessibleCustomers(requireGoogleAdsCredentials().refreshToken);
     // Each resource_name looks like "customers/1234567890" — extract the
     // digits-only ID that the rest of this codebase expects everywhere else.
     return result.resource_names.map((rn: string) => rn.replace("customers/", ""));
@@ -89,13 +104,14 @@ export function getCustomerClient(customerId: string, loginCustomerIdOverride?: 
     );
   }
 
+  const { refreshToken } = requireGoogleAdsCredentials();
   try {
     return getApiClient().Customer({
       customer_id: sanitized,
       // loginCustomerIdOverride is used for manager-hierarchy traversal, where the
       // query must be issued AS the manager being traversed.
       login_customer_id: (loginCustomerIdOverride ?? env.GOOGLE_ADS_LOGIN_CUSTOMER_ID)?.replace(/-/g, ""),
-      refresh_token: env.GOOGLE_ADS_REFRESH_TOKEN,
+      refresh_token: refreshToken,
     });
   } catch (err) {
     throw new GoogleAdsApiError(

@@ -14,3 +14,4 @@ process.env.GOOGLE_ADS_CLIENT_SECRET ??= "test-client-secret";
 process.env.GOOGLE_ADS_REFRESH_TOKEN ??= "test-refresh-token";
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/test?schema=public";
 process.env.LOG_LEVEL ??= "fatal";
+process.env.MCP_API_KEY ??= "test-mcp-api-key-0123456789abcdef";

@@ -18,6 +18,10 @@ External data providers are injected via `src/research/providers/registry.ts`; n
 unconfigured provider returns `PROVIDER_NOT_CONFIGURED` instead of invented numbers.
 Removed pilot-only tools: `run_account_audit`, `get_campaign_structure_recommendation`.
 
+### Remote deployment + dashboard
+Streamable HTTP endpoint (`/mcp`), a read-only dashboard (`/`) and bearer-key auth are included for Vercel.
+See **DEPLOY_VERCEL.md**. Local try-out: `npm run build && npm run start:http`.
+
 ### Running tests
 `npm test` (no DB needed). DB round-trip tests: `RUN_DB_TESTS=1 DATABASE_URL=postgresql://... npm test`
 (after `npx prisma db push`). Node >= 22 required (google-ads-api 25). See COMPATIBILITY_REVIEW.md.
