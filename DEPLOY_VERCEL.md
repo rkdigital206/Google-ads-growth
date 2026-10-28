@@ -1,6 +1,6 @@
 # Deploying to Vercel (remote MCP + dashboard)
 
-**Status: built and tested locally (real compiled server + real Postgres). NOT yet deployed to Vercel — first deploy is unverified.**
+**Status: deployed to Vercel (google-ads-growth.vercel.app) with a dedicated Neon database. Production builds sync the schema automatically via `scripts/vercel-build.mjs` (`prisma db push`, never with `--accept-data-loss`; set `SKIP_DB_PUSH=1` to disable). Nothing has been run against live Google Ads.**
 
 ## What you get
 | URL | What |

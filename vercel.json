@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "prisma generate && tsc -p tsconfig.json",
+  "buildCommand": "node scripts/vercel-build.mjs",
   "installCommand": "npm install",
   "outputDirectory": "public",
   "rewrites": [{ "source": "/mcp", "destination": "/api/mcp" }],
