@@ -1,0 +1,273 @@
+// Prisma schema for the Google Ads Growth & Optimization MCP.
+// Multi-client by design: every mutation, recommendation and approval is
+// scoped to a Client + GoogleAdsAccount so the same server can eventually
+// manage many businesses, not just the pilot (Murooj Al Rabee Used Appliances).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Coarse business classification — mirrors domain/business-profile.ts's BusinessType.
+// Drives which onboarding questions and economics calculations apply.
+enum BusinessType {
+  ECOMMERCE
+  LEAD_GENERATION
+  LOCAL_SERVICE
+  SAAS
+  B2B
+  MARKETPLACE
+  PROFESSIONAL_SERVICES
+  EDUCATION
+  HEALTHCARE
+  REAL_ESTATE
+  TRAVEL
+  OTHER
+}
+
+// The business outcome Google Ads should be optimized toward for a given
+// client — mirrors src/domain/business-profile.ts's ConversionGoalType.
+// Deliberately not defaulted anywhere; NULL until the client configures it.
+enum OptimizationObjective {
+  LEAD_GENERATION
+  ECOMMERCE_REVENUE
+  PROFIT
+  ROAS
+  CPA
+  CONVERSION_VOLUME
+  QUALIFIED_LEADS
+  PHONE_CALLS
+  BOOKINGS
+  STORE_VISITS
+}
+
+// A business Rehan manages growth systems for. One client can have
+// multiple Google Ads accounts (e.g. separate MCC-linked accounts per market).
+//
+// Business economics and optimization thresholds are TYPED fields, not
+// buried in contextJson — per the multi-client architecture brief (section
+// 31): "Do not hide critical business logic inside arbitrary JSON." Every
+// field below is nullable and must be treated as "unknown" when null, never
+// defaulted by application code (see src/domain/optimization-config.ts).
+model Client {
+  id          String   @id @default(cuid())
+  name        String
+  website     String?
+  industry    String?
+  subIndustry String?
+  businessType BusinessType?
+  businessModel String?
+  // Scalar arrays: a flat list of strings is all products/services need, so no child table (avoids excessive tables).
+  productsOrServices String[]
+  primaryOffers String[]
+  targetCountries String[]
+  languages   String[]
+  currency    String?
+  secondaryConversions String[]
+  growthGoal  String?
+  salesCycle  String?
+  reportedSeasonality String?
+  brandVoice  String?
+  trackingStatus String? // matches domain/business-profile.ts's TrackingStatus — kept as String (not enum) since UNKNOWN is a legitimate, common default and this field will likely gain values before it stabilizes
+  restrictions String[]
+
+  primaryConversionGoal OptimizationObjective?
+
+  // --- Economics (src/domain/optimization-config.ts: OptimizationConfig) ---
+  targetCPA          Float?
+  targetROAS         Float?
+  averageOrderValue  Float?
+  grossMargin        Float?
+  profitPerSale      Float?
+  leadValue          Float? // expected value of ONE lead — never silently reused as lifetime value
+  lifetimeValue      Float? // customer lifetime value — semantically distinct from leadValue / profitPerSale
+  leadToSaleRate     Float?
+  monthlyBudget      Float?
+
+  // --- Sample-size protection thresholds ---
+  minimumClicks       Int?
+  minimumImpressions  Int?
+  minimumSpend        Float?
+  minimumConversions  Int?
+  minimumDays         Int?
+
+  // --- Risk / change limits ---
+  budgetChangeLimitPct Float?
+
+  // Client-defined custom business intents (e.g. Murooj's BUY/SELL) — see
+  // src/domain/intent.ts's CustomIntentDefinition[]. Each client's set of
+  // custom intents has a different shape/count, so unlike the economics
+  // fields above (which are fixed, known scalars), a JSON array is the
+  // appropriate typed-at-the-application-layer representation here rather
+  // than an unbounded number of nullable columns.
+  customIntentsJson Json?
+
+  // Free-form notes only (research findings, open questions, etc.) — NOT
+  // a place to hide anything the typed fields above should hold instead.
+  contextJson Json?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  locations       ClientLocation[]
+  accounts        GoogleAdsAccount[]
+  recommendations Recommendation[]
+}
+
+// Structured service locations. A child table (not String[]) because each
+// location carries several fields (city/region/country/serviceRadius) that
+// research and geo-relevance logic needs separately.
+model ClientLocation {
+  id            String  @id @default(cuid())
+  clientId      String
+  client        Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  city          String
+  region        String?
+  country       String
+  serviceRadius String?
+
+  @@index([clientId])
+}
+
+enum GoogleAdsAccountType {
+  MANAGER
+  CLIENT
+  UNKNOWN
+}
+
+model GoogleAdsAccount {
+  id               String   @id @default(cuid())
+  clientId         String
+  client           Client   @relation(fields: [clientId], references: [id])
+  customerId       String   @unique // Google Ads customer ID, digits only
+  descriptiveName  String?
+  currencyCode     String?
+  timeZone         String?
+  isManagerLinked  Boolean  @default(false)
+  // The MCC customer ID this account is accessed through, when applicable.
+  // Distinct from GOOGLE_ADS_LOGIN_CUSTOMER_ID (the server's default MCC) —
+  // a multi-client system may eventually route different clients through
+  // different manager accounts.
+  managerAccountId String?
+  // MANAGER accounts can never be linked to a client as an ad account (they hold no campaigns).
+  accountType      GoogleAdsAccountType @default(UNKNOWN)
+  createdAt        DateTime @default(now())
+
+  changeLogEntries ChangeLogEntry[]
+  approvalRequests ApprovalRequest[]
+  recommendations  Recommendation[]
+  reports          PerformanceSnapshot[]
+
+  @@index([clientId])
+}
+
+enum ChangeStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+  EXECUTED
+  EXECUTION_FAILED
+  ROLLED_BACK
+}
+
+enum RiskLevel {
+  LOW    // auto-executable under policy (e.g. adding negative keywords)
+  MEDIUM // requires approval unless within configured auto-approve bounds
+  HIGH   // always requires explicit human approval (e.g. budget +/->X%, campaign creation, pausing a top performer)
+}
+
+// Every proposed or executed mutation, safe or risky, is logged here.
+// This is the audit trail — nothing touches a live account without a row here first.
+model ChangeLogEntry {
+  id                 String       @id @default(cuid())
+  accountId          String
+  account            GoogleAdsAccount @relation(fields: [accountId], references: [id])
+  resourceType       String       // e.g. "campaign", "ad_group", "keyword", "ad", "budget"
+  resourceId         String?      // Google Ads resource name once known
+  operation          String       // e.g. "CREATE", "UPDATE", "PAUSE", "REMOVE"
+  riskLevel          RiskLevel
+  status             ChangeStatus @default(PROPOSED)
+  beforeState        Json?
+  proposedState       Json
+  reasoning          String       // why the AI is proposing this — required, never blank
+  requestedByTool    String       // which MCP tool initiated this
+  approvalRequestId  String?      @unique
+  approvalRequest    ApprovalRequest? @relation(fields: [approvalRequestId], references: [id])
+  executedAt         DateTime?
+  errorMessage       String?
+  createdAt          DateTime     @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([status])
+}
+
+// A pending human decision. Anything RiskLevel.HIGH (and MEDIUM outside
+// auto-approve bounds) creates one of these and blocks execution until resolved.
+model ApprovalRequest {
+  id           String        @id @default(cuid())
+  accountId    String
+  account      GoogleAdsAccount @relation(fields: [accountId], references: [id])
+  summary      String        // human-readable one-liner for the approver
+  detailJson   Json          // full proposed change payload
+  riskLevel    RiskLevel
+  status       ChangeStatus  @default(PROPOSED)
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdAt    DateTime      @default(now())
+
+  changeLogEntry ChangeLogEntry?
+
+  @@index([accountId, status])
+}
+
+enum RecommendationCategory {
+  BUDGET
+  BIDDING
+  KEYWORD
+  NEGATIVE_KEYWORD
+  AD_COPY
+  LANDING_PAGE
+  TRACKING
+  CAMPAIGN_STRUCTURE
+  AUDIENCE
+}
+
+// AI-generated optimization recommendations, independent of whether they've
+// been turned into a ChangeLogEntry yet. Lets us report "here's what we found"
+// even for suggestions a human hasn't acted on.
+model Recommendation {
+  id           String   @id @default(cuid())
+  clientId     String
+  client       Client   @relation(fields: [clientId], references: [id])
+  accountId    String
+  account      GoogleAdsAccount @relation(fields: [accountId], references: [id])
+  category     RecommendationCategory
+  title        String
+  detail       String
+  expectedImpact String?
+  confidence   Float?   // 0-1, model's self-assessed confidence
+  status       String   @default("OPEN") // OPEN | ACCEPTED | DISMISSED | SUPERSEDED
+  createdAt    DateTime @default(now())
+
+  @@index([accountId, status])
+}
+
+// Periodic snapshot of key account/campaign metrics, so trend analysis and
+// anomaly detection don't require re-querying the live API every time.
+model PerformanceSnapshot {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     GoogleAdsAccount @relation(fields: [accountId], references: [id])
+  periodStart DateTime
+  periodEnd   DateTime
+  granularity String   // "DAY" | "WEEK" | "CAMPAIGN" etc.
+  metricsJson Json     // raw GAQL result rows for the period
+  createdAt   DateTime @default(now())
+
+  @@index([accountId, periodStart, periodEnd])
+}
